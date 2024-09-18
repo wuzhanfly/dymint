@@ -11,6 +11,7 @@ type FreezeHandler struct {
 	m *Manager
 }
 
+// HandleFault TODO
 func (f FreezeHandler) HandleFault(ctx context.Context, fault error) {
 	uevent.MustPublish(context.TODO(), f.m.Pubsub, &events.DataHealthStatus{Error: fault}, events.HealthStatusList)
 }

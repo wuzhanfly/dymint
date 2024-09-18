@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dymensionxyz/dymint/settlement"
+	"github.com/tendermint/tendermint/libs/pubsub"
 	"sync/atomic"
 	"time"
 
@@ -113,6 +115,12 @@ func SubmitLoopInner(
 					err = fmt.Errorf("create and submit batch: %w", err)
 					if errors.Is(err, gerrc.ErrInternal) {
 						logger.Error("Create and submit batch", "err", err, "pending", pending)
+						panic(err)
+					}
+					// this could happen if we timed-out waiting for acceptance in the previous iteration, but the batch was indeed submitted.
+					// we panic here cause restarting may reset the last batch submitted counter and the sequencer can potentially resume submitting batches.
+					if errors.Is(err, gerrc.ErrAlreadyExists) {
+						logger.Debug("Batch already accepted", "err", err, "pending", pending)
 						panic(err)
 					}
 					return err
@@ -262,4 +270,18 @@ func (m *Manager) GetUnsubmittedBytes() int {
 
 func (m *Manager) GetUnsubmittedBlocks() uint64 {
 	return m.State.Height() - m.LastSubmittedHeight.Load()
+}
+
+// UpdateLastSubmittedHeight will update last height submitted height upon events.
+// This may be necessary in case we crashed/restarted before getting response for our submission to the settlement layer.
+func (m *Manager) UpdateLastSubmittedHeight(event pubsub.Message) {
+	eventData, ok := event.Data().(*settlement.EventDataNewBatchAccepted)
+	if !ok {
+		m.logger.Error("onReceivedBatch", "err", "wrong event data received")
+		return
+	}
+	h := eventData.EndHeight
+	if m.LastSubmittedHeight.Load() < h {
+		m.LastSubmittedHeight.Store(h)
+	}
 }
